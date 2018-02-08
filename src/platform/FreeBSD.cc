@@ -31,10 +31,13 @@
 #include "platform/FreeBSD.hh"
 #include "CommandLine.hh"
 #include "UserError.hh"
-
+#include <vector>
+#include <iostream>
 #include <cassert>
 #include <sstream>
-
+#include <libpreopen.h>
+#include <string>
+#include <err.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -42,7 +45,7 @@
 using namespace capsh;
 using std::string;
 using std::vector;
-
+using namespace std;
 extern char **environ;
 
 
@@ -129,16 +132,24 @@ std::unique_ptr<Platform> FreeBSD::Create()
 FreeBSD::FreeBSD(LinkerMap linkers, vector<int> libdirs, vector<int> pathdirs)
 	: linkers_(std::move(linkers)), libdirs_(libdirs), pathdirs_(pathdirs)
 {
+	map=po_map_create(4);
 }
 
 
 CommandLine FreeBSD::ParseArgs(int argc, char *argv[]) const
 {
 	assert(argc > 0);
+        
 	vector<const string> args(argv, argv + argc);
+        
 	assert(not args.empty());
+        
+       /* for(size_t i=0;i<args.size(); i++){
+            cout<<args[i]<<endl;
+        }*/
 
 	int binary = openat(AT_FDCWD, argv[0], O_RDONLY);
+        
 	for (int dir : pathdirs_)
 	{
 		if (binary >= 0)
@@ -148,7 +159,23 @@ CommandLine FreeBSD::ParseArgs(int argc, char *argv[]) const
 
 		binary = openat(dir, argv[0], O_RDONLY);
 	}
-
+	for(string str:args){
+                if(str.compare(args.at(0)) == 0){
+                
+                    continue;
+                }
+                const char* file_path= str.c_str();
+		int k = po_preopen(map,file_path);
+		k+=k;
+                //assert(k != -1);
+               //printf(" PATH IS %d\n",k);
+	
+	}
+       
+            
+           
+        
+        
 	if (binary < 0)
 		throw PosixError("unable to open executable '" + args[0] + "'");
 
@@ -158,10 +185,14 @@ CommandLine FreeBSD::ParseArgs(int argc, char *argv[]) const
 
 void FreeBSD::Execute(const CommandLine& c) const
 {
+      
+    
 	auto& binary = dynamic_cast<const FileDescriptor&>(*c.executable());
+        
 	const FileDescriptor& linker = getLinkerFor(binary);
-
+	
 	// Build arguments vector: rtld -f <FD> -- <binary> <binary args>
+	
 	vector<char*> argv
 	{
 		strdup("rtld"),
@@ -178,19 +209,50 @@ void FreeBSD::Execute(const CommandLine& c) const
 
 	// Add a colon-separated list of library directories to the environment.
 	string libs;
+
 	const size_t libcount = libdirs_.size();
+
 	for (size_t i = 0; i < libcount; i++)
 	{
 		libs += std::to_string(libdirs_[i]);
+
 		if (i < (libcount - 1))
 		{
 			libs += ":";
 		}
 	}
+        
 	setenv("LD_LIBRARY_PATH_FDS", libs.c_str(), 1);
-
+        
+        int shared_memoryFD = po_pack(map);
+        
+        assert(shared_memoryFD != -1);
+        
+        if(fcntl(shared_memoryFD, F_GETFD)!=0){
+            fcntl(shared_memoryFD,F_SETFD,0);
+        }
+          std::string shm_fd_str = std::to_string(shared_memoryFD);
+        
+        //std::cout<<"shared memory FD is "<<shared_memoryFD<<std::endl;
+        
+        //std::cout<<"shared memory FD string "<<shm_fd_str <<std::endl;
+          
+          for(int i=0;i<po_map_length(map);i++){
+            std::cout<<"FROM CAPSH "<<po_map_name(map, i)<<std::endl;
+        }
+         
+        if (setenv("SHARED_MEMORYFD",shm_fd_str.c_str(), 1) != 0) {
+            err(-1, "failed to set SHARED_MEMORYFD");
+        }
+        
+        
+        auto load_libpreopen_library = std::string("libpreopen.so");
+        
+        setenv("LD_PRELOAD", load_libpreopen_library.c_str() ,1);
 	// And... go!
+        
 	fexecve(linker.borrow(), argv.data(), environ);
+
 	throw PosixError("error in fexecve()");
 }
 

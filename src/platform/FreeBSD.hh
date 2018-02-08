@@ -32,7 +32,7 @@
 
 #include "platform/Capsicum.hh"
 #include "File.hh"
-
+#include<libpreopen.h>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -47,6 +47,7 @@ public:
 	CommandLine ParseArgs(int argc, char *argv[]) const override;
 
 	void Execute(const CommandLine&) const override;
+	
 
 private:
 	// A mapping from ABIs (internal numbering) to linker file descriptors.
@@ -60,6 +61,9 @@ private:
 	const LinkerMap linkers_;
 	const std::vector<int> libdirs_;
 	const std::vector<int> pathdirs_;
+	po_map* map;
+	
+       
 };
 
 } // namespace capsh
